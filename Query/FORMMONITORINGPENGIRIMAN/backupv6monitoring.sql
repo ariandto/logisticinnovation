@@ -1,0 +1,317 @@
+ALTER PROCEDURE [dbo].[spMonitoringPengiriman]
+    @startdate VARCHAR(20) = NULL,
+    @enddate   VARCHAR(20) = NULL,
+    @site      VARCHAR(MAX) = NULL,
+    @owner     VARCHAR(MAX) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF @startdate IS NULL SET @startdate = CONVERT(VARCHAR(20), GETDATE(), 120);
+    IF @enddate   IS NULL SET @enddate   = CONVERT(VARCHAR(20), GETDATE(), 120);
+
+    CREATE TABLE #Sites (Site VARCHAR(50));
+    CREATE TABLE #Owners (Owner VARCHAR(50));
+
+    IF @site IS NOT NULL
+    BEGIN
+        DECLARE @SiteXML XML = CAST('<S><V>' + REPLACE(@site, ',', '</V><V>') + '</V></S>' AS XML);
+        INSERT INTO #Sites (Site)
+        SELECT LTRIM(RTRIM(V.value('.', 'VARCHAR(50)')))
+        FROM @SiteXML.nodes('/S/V') AS X(V);
+    END
+
+    IF @owner IS NOT NULL
+    BEGIN
+        DECLARE @OwnerXML XML = CAST('<S><V>' + REPLACE(@owner, ',', '</V><V>') + '</V></S>' AS XML);
+        INSERT INTO #Owners (Owner)
+        SELECT LTRIM(RTRIM(V.value('.', 'VARCHAR(50)')))
+        FROM @OwnerXML.nodes('/S/V') AS X(V);
+    END
+
+    -- Buat tabel temporer untuk menyimpan hasil
+    CREATE TABLE #MainResult (
+        TRANSNO VARCHAR(100),
+        [type code] VARCHAR(10),
+        [Type Pengiriman] VARCHAR(50),
+        PlanDeliveryDate DATETIME,
+        site VARCHAR(50),
+        type VARCHAR(50),
+        nopol VARCHAR(50),
+        Owner VARCHAR(50),
+        Jenisarmada VARCHAR(50),
+        Aktual_TAT INT,
+        Standar_TAT_Calc INT,
+        Status_TAT VARCHAR(10),
+        std_Time_per_Dp_2 INT,
+        std_UJP INT,
+        [std drop point] INT,
+        jalur VARCHAR(50),
+        DropPoint INT,
+        [Order] INT,
+        rdo_no VARCHAR(100),
+        driverid VARCHAR(50),
+        drivername VARCHAR(100),
+        crew1id VARCHAR(50),
+        crew1name VARCHAR(100),
+        no_polisi VARCHAR(50),
+        kode_armada VARCHAR(50),
+        Checkin1 DATETIME,
+        Checkin2 DATETIME,
+        Checkin3 DATETIME,
+        Checkin4 DATETIME,
+        Checkin5 DATETIME,
+        Checkin6 DATETIME,
+        Checkin7 DATETIME,
+        Checkin8 DATETIME,
+        Checkin9 DATETIME,
+        Checkin10 DATETIME,
+        Checkin11 DATETIME,
+        Checkin12 DATETIME,
+        Checkin13 DATETIME,
+        Checkin14 DATETIME,
+        Checkin15 DATETIME,
+        Checkin16 DATETIME,
+        Checkin17 DATETIME,
+        Checkin18 DATETIME,
+        Checkin19 DATETIME,
+        Checkin20 DATETIME,
+        checkout DATETIME,
+        checkin_dc DATETIME,
+        rn INT
+    );
+
+    ;WITH RdoSI AS
+    (
+        SELECT 
+            SI_NO,
+            COUNT(DISTINCT SEQUENCE) AS DropPoint,
+            COUNT(DISTINCT ORDERKEY) AS [Order]
+        FROM Expediter.dbo.t_rdo_si
+        WHERE STATUS NOT IN (12, 13) 
+          AND RTACTION NOT IN ('a','t')
+        GROUP BY SI_NO
+    )
+    INSERT INTO #MainResult
+    SELECT 
+        sih.TRANSNO,
+        CASE 
+            WHEN LEN(sih.TRANSNO) >= 7 THEN SUBSTRING(sih.TRANSNO, 7, 1)
+            ELSE ''
+        END AS [type code],
+        CASE 
+            WHEN LEN(sih.TRANSNO) >= 7 THEN 
+                CASE SUBSTRING(sih.TRANSNO, 7, 1)
+                    WHEN 'A' THEN 'Store Dalam Kota'
+                    WHEN 'D' THEN 'Store Dalam Kota'
+                    WHEN 'C' THEN 'Customer'
+                    WHEN 'H' THEN 'Hub'
+                    WHEN 'X' THEN 'Other Delivery'
+                    WHEN 'B' THEN 'Store Luar Kota'
+                    WHEN 'L' THEN 'Luar Kota'
+                    WHEN 'T' THEN 'Transit Luar Kota'
+                    ELSE ''
+                END
+            ELSE ''
+        END AS [Type Pengiriman],
+        sih.PlanDeliveryDate,
+        sih.[site],
+        sih.[type],
+        sih.nopol,
+        sih.[Owner],
+        sih.[Jenisarmada],
+        DATEDIFF(MINUTE, co.checkout, ci.checkin_dc) AS Aktual_TAT,
+        (
+            OLF.std_TravelTime * 2 + ISNULL(rdos.DropPoint,0) * 
+            CASE 
+                WHEN LEN(sih.TRANSNO) >= 7 THEN 
+                    CASE SUBSTRING(sih.TRANSNO,7,1)
+                        WHEN 'C' THEN 30
+                        WHEN 'H' THEN 60
+                        WHEN 'A' THEN 
+                            CASE 
+                                WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') THEN 120
+                                WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+                                ELSE 60
+                            END
+                        WHEN 'D' THEN 1
+                        WHEN 'X' THEN 1
+                        WHEN 'B' THEN 
+                            CASE 
+                                WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') THEN 120
+                                WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+                                ELSE olf.std_Time_per_Dp
+                            END
+                        WHEN 'L' THEN 
+                            CASE 
+                                WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') THEN 120
+                                WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+                                ELSE olf.std_Time_per_Dp
+                            END
+                        ELSE olf.std_Time_per_Dp
+                    END
+                ELSE olf.std_Time_per_Dp
+            END
+        ) AS Standar_TAT_Calc,
+        CASE 
+            WHEN DATEDIFF(MINUTE, co.checkout, ci.checkin_dc) > 
+                 (OLF.std_TravelTime * 2 + ISNULL(rdos.DropPoint,0) * 
+                  CASE 
+                      WHEN LEN(sih.TRANSNO) >= 7 THEN 
+                          CASE SUBSTRING(sih.TRANSNO,7,1)
+                              WHEN 'C' THEN 30
+                              WHEN 'H' THEN 60
+                              WHEN 'A' THEN 
+                                  CASE 
+                                      WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') THEN 120
+                                      WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+                                      ELSE 60
+                                  END
+                              WHEN 'D' THEN 1
+                              WHEN 'X' THEN 1
+                              WHEN 'B' THEN 
+                                  CASE 
+                                      WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') THEN 120
+                                      WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+                                      ELSE olf.std_Time_per_Dp
+                                  END
+                              WHEN 'L' THEN 
+                                  CASE 
+                                      WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') THEN 120
+                                      WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+                                      ELSE olf.std_Time_per_Dp
+                                  END
+                              ELSE olf.std_Time_per_Dp
+                          END
+                      ELSE olf.std_Time_per_Dp
+                  END)
+            THEN 'MIS'
+            ELSE 'HIT'
+        END AS Status_TAT,
+        CASE 
+            WHEN LEN(sih.TRANSNO) >= 7 AND SUBSTRING(sih.TRANSNO,7,1) = 'H' THEN 60
+            WHEN SUBSTRING(sih.TRANSNO,7,1) = 'A' 
+                 AND sih.Jenisarmada NOT IN ('FUSO','WINGBOX','CONT-20','CONT-40') THEN 60
+            WHEN sih.Jenisarmada IN ('FUSO','WINGBOX','CONT-20') 
+                 AND SUBSTRING(sih.TRANSNO,7,1) IN ('A','B','L') THEN 120
+            WHEN sih.Jenisarmada = 'CONT-40' THEN 150
+            ELSE olf.std_Time_per_Dp
+        END AS std_Time_per_Dp_2,
+        olf.std_UJP,
+        CASE 
+            WHEN SUBSTRING(sih.TRANSNO,7,1) IN ('A','D','X','H') THEN 1
+            ELSE olf.droppoint
+        END AS [std drop point],
+        req.jalur,
+        rdos.DropPoint,
+        rdos.[Order],
+        rdoh.rdo_no,
+        rdoh.driverid,
+        rdoh.drivername,
+        rdoh.crew1id,
+        rdoh.crew1name,
+        marm.no_polisi,
+        marm.kode_armada,
+        rdod.[1] AS Checkin1,
+        rdod.[2] AS Checkin2,
+        rdod.[3] AS Checkin3,
+        rdod.[4] AS Checkin4,
+        rdod.[5] AS Checkin5,
+        rdod.[6] AS Checkin6,
+        rdod.[7] AS Checkin7,
+        rdod.[8] AS Checkin8,
+        rdod.[9] AS Checkin9,
+        rdod.[10] AS Checkin10,
+        rdod.[11] AS Checkin11,
+        rdod.[12] AS Checkin12,
+        rdod.[13] AS Checkin13,
+        rdod.[14] AS Checkin14,
+        rdod.[15] AS Checkin15,
+        rdod.[16] AS Checkin16,
+        rdod.[17] AS Checkin17,
+        rdod.[18] AS Checkin18,
+        rdod.[19] AS Checkin19,
+        rdod.[20] AS Checkin20,
+        co.checkout,       -- checkout (MIN status 12)
+        ci.checkin_dc,     -- checkin_dc (MAX status 13)
+        ROW_NUMBER() OVER (PARTITION BY sih.TRANSNO ORDER BY sih.PlanDeliveryDate DESC) AS rn
+    FROM Expediter.dbo.t_si_h sih
+    LEFT JOIN Expediter.dbo.t_si_request req 
+        ON sih.transno = req.requestid
+    LEFT JOIN Expediter.dbo.t_rdo_h rdoh 
+        ON sih.transno = rdoh.si_no
+    LEFT JOIN RdoSI rdos
+        ON rdoh.si_no = rdos.SI_NO
+    LEFT JOIN arc_expediter.dbo.configtp_dp_olf olf
+        ON req.jalur = olf.jalur
+    LEFT JOIN Expediter.dbo.m_armada marm 
+        ON sih.nopol = marm.no_polisi
+    LEFT JOIN
+    (
+        SELECT 
+            rdo_no,
+            [1],[2],[3],[4],[5],
+            [6],[7],[8],[9],[10],
+            [11],[12],[13],[14],[15],
+            [16],[17],[18],[19],[20]
+        FROM
+        (
+            SELECT 
+                DENSE_RANK() OVER (PARTITION BY rdo_no ORDER BY detno) AS RowNum,
+                rdo_no,
+                checkin
+            FROM Expediter.dbo.t_rdo_d
+            WHERE status NOT IN (12, 13)
+        ) AS SourceTable
+        PIVOT
+        (
+            MAX(checkin) FOR RowNum IN 
+            ([1],[2],[3],[4],[5],[6],[7],[8],[9],[10],
+             [11],[12],[13],[14],[15],[16],[17],[18],[19],[20])
+        ) AS p
+    ) rdod 
+        ON rdoh.rdo_no = rdod.rdo_no
+    LEFT JOIN
+    (
+        SELECT 
+            rdo_no,
+            MIN(checkout) AS checkout
+        FROM Expediter.dbo.t_rdo_d
+        WHERE status = 12
+        GROUP BY rdo_no
+    ) co
+        ON rdoh.rdo_no = co.rdo_no
+    LEFT JOIN
+    (
+        SELECT 
+            rdo_no,
+            MAX(checkin) AS checkin_dc
+        FROM Expediter.dbo.t_rdo_d
+        WHERE status = 13
+        GROUP BY rdo_no
+    ) ci
+        ON rdoh.rdo_no = ci.rdo_no
+    WHERE sih.plandeliverydate BETWEEN @startdate AND @enddate
+      AND (@site IS NULL OR EXISTS (SELECT 1 FROM #Sites s WHERE s.Site = sih.[site]))
+      AND (@owner IS NULL OR EXISTS (SELECT 1 FROM #Owners o WHERE o.Owner = sih.[Owner]))
+      AND NOT (sih.[Owner] = 'HCI' AND sih.[site] <> 'WMWHSE4')
+      AND sih.[type] IN ('Internal','Pinjam Sisco');
+
+    -- Tabel 1: Data Detail
+    SELECT *
+    FROM #MainResult
+    WHERE rn = 1;
+
+    -- Tabel 2: Summary TAT HIT dan MIS
+    SELECT 
+        Status_TAT,
+        COUNT(*) AS Qty
+    FROM #MainResult
+    WHERE rn = 1
+    GROUP BY Status_TAT;
+
+    -- Drop semua tabel temporer
+    DROP TABLE #Sites;
+    DROP TABLE #Owners;
+    DROP TABLE #MainResult;
+END

@@ -1,0 +1,1 @@
+	EXEC [udsp_Get_Data] 'Get Zone DC 2','DC INFORMA JABABEKA','WMWHSE4RTL','NDC','ALL'

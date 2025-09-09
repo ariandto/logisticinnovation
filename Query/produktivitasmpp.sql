@@ -1,0 +1,1 @@
+exec FACILITY_Avability_Driver 'WMWHSE4','2','ALL;HCI JABABEKA;AHI JABABEKA;KLS JABABEKA;FBI JABABEKA;KLS HO;','08','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','','20','20'
